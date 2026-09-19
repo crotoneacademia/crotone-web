@@ -2,19 +2,20 @@ import React, { useEffect, useState } from "react";
 import Link from "@docusaurus/Link";
 import Head from "@docusaurus/Head";
 import { useLocation } from "@docusaurus/router";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 // Original supplied logo, preserved without alteration.
-// A route-relative path works from both the temporary GitHub project URL and
-// the custom domain while its DNS records propagate.
+// Resolved through Docusaurus so nested pages and alternate base URLs both work.
 export const BRAND_LOGO = "img/brand/crotone-logo.png";
 export const TAGLINE = "EXPLORE • QUESTION • UNDERSTAND";
 export function Arrow({ external = false }: { external?: boolean }) {
   return <span aria-hidden="true">{external ? "↗" : "↗"}</span>;
 }
 export function Wordmark() {
+  const logoUrl = useBaseUrl(BRAND_LOGO);
   return (
     <Link to="/" className="wordmark" aria-label="Crotone Academia home">
-      <img src={BRAND_LOGO} alt="" width={58} height={55} />
+      <img src={logoUrl} alt="" width={58} height={55} />
       <span>
         CROTONE<span>ACADEMIA</span>
       </span>

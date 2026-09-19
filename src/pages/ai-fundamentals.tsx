@@ -7,7 +7,7 @@ export default function AI() {
       number="01"
       label="Education · Ongoing"
       title="AI Fundamentals"
-      description="From the foundations of artificial intelligence to modern language models and agentic systems."
+      description="From artificial-intelligence foundations to agentic AI implementations."
       kind="network"
     >
       <Content />

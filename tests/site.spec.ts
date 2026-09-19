@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-const routes = ["/", "/ai-fundamentals", "/research", "/about"];
+const routes = [
+  "/",
+  "/ai-fundamentals",
+  "/ai-fundamentals/from-turing-to-agentic-ai",
+  "/research",
+  "/about",
+];
 for (const width of [1440, 1200, 1024, 768, 430, 390]) {
   test(`Pages render without overflow at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -8,8 +14,17 @@ for (const width of [1440, 1200, 1024, 768, 430, 390]) {
     for (const route of routes) {
       const response = await page.goto(route);
       expect(response?.status()).toBe(200);
-      await expect(page.locator("main h1")).toHaveCount(1);
-      await expect(page.locator("main h1")).toBeVisible();
+      if (route !== "/ai-fundamentals/from-turing-to-agentic-ai") {
+        await expect(page.locator("main h1")).toHaveCount(1);
+        await expect(page.locator("main h1")).toBeVisible();
+        expect(
+          await page.locator(".site-header .wordmark img").evaluate(
+            (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+          ),
+        ).toBe(true);
+      } else {
+        await expect(page.locator(".lesson-shell")).toBeVisible();
+      }
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
@@ -25,7 +40,7 @@ for (const width of [1440, 1200, 1024, 768, 430, 390]) {
       );
       if (width === 1440 || width === 390)
         await page.screenshot({
-          path: `test-results/${route === "/" ? "home" : route.slice(1)}-${width}.png`,
+          path: `test-results/${route === "/" ? "home" : route.slice(1).replaceAll("/", "-")}-${width}.png`,
           fullPage: true,
         });
     }
@@ -51,6 +66,50 @@ test("Desktop links and course content", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Curiosity is our starting point." }),
   ).toBeVisible();
+});
+test("Interactive lesson navigation and learning activities", async ({ page }) => {
+  await page.goto("/ai-fundamentals/from-turing-to-agentic-ai");
+  await expect(page.locator(".lesson-stage")).toBeInViewport();
+  await expect(page.getByRole("heading", { name: /A conversation from 1950/ }))
+    .toBeVisible();
+
+  await page.getByRole("button", { name: "Next slide" }).click();
+  await expect(page.getByRole("heading", { name: "Turing changes the question." }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Read the deeper context" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Turing changed the question." }))
+    .toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Agentic AI", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /The model gets connected/ }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Next slide" }).click();
+  await page.getByRole("button", { name: /Advance example|Replay one cycle/ }).click();
+  await expect(page.locator(".agent-loop-example")).toBeVisible();
+
+  await page.getByRole("button", { name: "Enter presentation" }).click();
+  await expect(page.locator(".lesson-shell")).toHaveClass(/is-presenting/);
+  await expect(page.locator(".lesson-rail")).toBeVisible();
+  await page.getByRole("button", { name: "Exit presentation" }).click();
+  await expect(page.locator(".lesson-shell")).not.toHaveClass(/is-presenting/);
+});
+test("Every lecture scene stays readable without horizontal overflow", async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/ai-fundamentals/from-turing-to-agentic-ai#lesson");
+    await page.getByRole("button", { name: "The question" }).click();
+    const next = page.getByRole("button", { name: "Next slide" });
+    for (let scene = 0; scene < 16; scene += 1) {
+      await expect(page.locator(".lecture-heading h2")).toBeVisible();
+      await expect(page.locator(".lecture-notes")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (scene < 15) await next.click();
+    }
+  }
 });
 test("Mobile menu, keyboard dismissal, and navigation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -86,6 +145,7 @@ test("Local links and deployment assets exist", async ({ page, request }) => {
     "/CNAME",
     "/img/brand/crotone-logo.png",
     "/img/brand/social-preview.png",
+    "/img/lessons/agentic-convergence-cinematic.jpg",
   ]) {
     expect((await request.get(url)).status(), url).toBe(200);
   }
