@@ -1,0 +1,8 @@
+node_modules/
+build/
+.docusaurus/
+.DS_Store
+.env*
+!.env.example
+test-results/
+playwright-report/

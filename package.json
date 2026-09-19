@@ -1,0 +1,55 @@
+{
+  "name": "crotone-web",
+  "version": "1.0.0",
+  "description": "Crotone Academia public website",
+  "scripts": {
+    "start": "docusaurus start --host 0.0.0.0",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve --host 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "clear": "docusaurus clear",
+    "test:e2e": "playwright test",
+    "social-preview": "node scripts/social-preview.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crotoneacademia/crotone-web.git"
+  },
+  "keywords": [],
+  "author": "",
+  "bugs": {
+    "url": "https://github.com/crotoneacademia/crotone-web/issues"
+  },
+  "homepage": "https://github.com/crotoneacademia/crotone-web#readme",
+  "dependencies": {
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
+    "@fontsource/inter": "^5.3.0",
+    "@mdx-js/react": "^3.1.1",
+    "clsx": "^2.1.1",
+    "katex": "^0.18.7",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@docusaurus/tsconfig": "^3.10.2",
+    "@docusaurus/types": "^3.10.2",
+    "@playwright/test": "^1.63.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "~5.9.3"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.1",
+    "sockjs": {
+      "uuid": "^11.1.1"
+    }
+  }
+}
