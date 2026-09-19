@@ -22,11 +22,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-        env:
-          SITE_URL: https://crotoneacademia.github.io
-          SITE_BASE_URL: /crotone-web/
-      # Keep the custom domain inactive until its DNS is ready.
-      - run: rm -f build/CNAME
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

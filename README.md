@@ -73,6 +73,6 @@ npm run test:e2e
 
 The browser suite builds and serves the production site, checks all public pages across the specified screen widths, verifies navigation and mobile menu keyboard behavior, and checks metadata and local links.
 
-## Initial deployment address
+## Deployment address
 
-The Pages workflow initially publishes at `https://crotoneacademia.github.io/crotone-web/`, using `SITE_URL` and `SITE_BASE_URL` build variables. The source retains custom-domain defaults for local development, but the workflow omits CNAME from the deployed output until DNS is ready. To switch to the custom domain, remove those workflow overrides and the CNAME-removal step, configure the Pages custom domain, and update DNS as documented above.
+The production workflow builds for `https://crotone.academy/`. GitHub Pages must have `crotone.academy` set as its custom domain, and Squarespace DNS must point to GitHub using the records above. The repository remains `crotoneacademia/crotone-web`; no repository rename is needed for a custom domain.
