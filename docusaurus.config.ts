@@ -22,6 +22,8 @@ const config: Config = {
         theme: {
           customCss: [
             "./src/css/custom.css",
+            "./src/css/lesson.css",
+            "./src/css/lesson-architectures.css",
             require.resolve("katex/dist/katex.min.css"),
           ],
         },

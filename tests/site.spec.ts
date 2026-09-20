@@ -3,8 +3,13 @@ const routes = [
   "/",
   "/ai-fundamentals",
   "/ai-fundamentals/from-turing-to-agentic-ai",
+  "/ai-fundamentals/architectures-and-design-principles",
   "/research",
   "/about",
+];
+const lessonRoutes = [
+  "/ai-fundamentals/from-turing-to-agentic-ai",
+  "/ai-fundamentals/architectures-and-design-principles",
 ];
 for (const width of [1440, 1200, 1024, 768, 430, 390]) {
   test(`Pages render without overflow at ${width}px`, async ({ page }) => {
@@ -14,7 +19,7 @@ for (const width of [1440, 1200, 1024, 768, 430, 390]) {
     for (const route of routes) {
       const response = await page.goto(route);
       expect(response?.status()).toBe(200);
-      if (route !== "/ai-fundamentals/from-turing-to-agentic-ai") {
+      if (!lessonRoutes.includes(route)) {
         await expect(page.locator("main h1")).toHaveCount(1);
         await expect(page.locator("main h1")).toBeVisible();
         expect(
@@ -110,6 +115,68 @@ test("Every lecture scene stays readable without horizontal overflow", async ({ 
       if (scene < 15) await next.click();
     }
   }
+});
+test("Lesson 02 interactive activities", async ({ page }) => {
+  await page.goto("/ai-fundamentals/architectures-and-design-principles");
+  await expect(page.getByRole("heading", { name: /Agentic AI arrives with a wall of words/ }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Reveal the answer" }).click();
+  await expect(page.locator(".ax-wall-no")).toHaveText("No.");
+
+  await page.getByRole("button", { name: "Glossary" }).click();
+  await expect(page.getByRole("dialog")).toContainText("Model Context Protocol");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "From inference to agency", exact: true }).click();
+  await page.getByRole("tab", { name: /Runtime control/ }).click();
+  await expect(page.locator(".ax-verdict")).toContainText("Agentic behaviour");
+
+  await page.getByRole("button", { name: "Go to design principle II", exact: true }).click();
+  await page.getByRole("button", { name: "Function / workflow" }).click();
+  await expect(page.locator(".ax-triage-feedback")).toContainText("Right.");
+  await expect(page.locator(".lesson-rail-principles > span")).toContainText("1/10");
+
+  await page.getByRole("button", { name: "Go to design principle III", exact: true }).click();
+  await page.getByRole("button", { name: "A retrieved email" }).click();
+  await page.getByRole("button", { name: "Run the request" }).click();
+  await expect(page.locator(".ax-gates li.is-fail")).toContainText("retrieved content");
+
+  await page.getByRole("button", { name: "Go to design principle V", exact: true }).click();
+  const steps = page.getByRole("slider").first();
+  await steps.focus();
+  await page.keyboard.press("Home");
+  await expect(page.getByRole("heading", { name: /Autonomy must be bounded/ })).toBeVisible();
+  await expect(page.locator(".ax-envelope-outcome")).toContainText("step limit (1)");
+
+  await page.getByRole("button", { name: "Synthesis", exact: true }).click();
+  await page.getByRole("button", { name: "Tool", exact: true }).click();
+  await page.getByRole("button", { name: "Place Tool in Action" }).click();
+  await expect(page.locator(".ax-sort-info")).toContainText("capability exposed to the agent");
+});
+test("Every Lesson 02 scene stays readable without horizontal overflow", async ({ page }) => {
+  test.setTimeout(90_000);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/ai-fundamentals/architectures-and-design-principles");
+    const next = page.getByRole("button", { name: "Next slide" });
+    for (let scene = 0; scene < 26; scene += 1) {
+      await expect(page.locator(".lecture-heading h2")).toBeVisible();
+      await expect(page.locator(".lecture-notes")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (scene < 25) await next.click();
+    }
+  }
+});
+test("Lesson 01 links forward to Lesson 02", async ({ page }) => {
+  await page.goto("/ai-fundamentals/from-turing-to-agentic-ai");
+  const next = page.getByRole("link", { name: /Lesson 02/ });
+  await expect(async () => {
+    await page.keyboard.press("End");
+    await expect(next).toBeVisible({ timeout: 1000 });
+  }).toPass();
+  await next.click();
+  await expect(page).toHaveURL("/ai-fundamentals/architectures-and-design-principles");
 });
 test("Mobile menu, keyboard dismissal, and navigation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

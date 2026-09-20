@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import Link from "@docusaurus/Link";
+import React, { useCallback, useEffect, useState } from "react";
 import useBaseUrl from "@docusaurus/useBaseUrl";
+import LessonPlayer, { LectureScene, type DeepDive, type LessonSlide } from "./lesson/LessonPlayer";
+import { Diagram } from "./lesson/diagram";
 
 type Phase =
   | "turing"
@@ -11,11 +12,7 @@ type Phase =
   | "cloud"
   | "agentic";
 
-type Slide = {
-  phase: Phase;
-  eyebrow: string;
-  content: React.ReactNode;
-};
+type Slide = LessonSlide<Phase>;
 
 const phaseLabels: Record<Phase, string> = {
   turing: "The question",
@@ -27,10 +24,7 @@ const phaseLabels: Record<Phase, string> = {
   agentic: "Agentic AI",
 };
 
-const deepDives: Record<
-  string,
-  { title: string; kicker: string; content: React.ReactNode; source?: [string, string] }
-> = {
+const deepDives: Record<string, DeepDive> = {
   turing: {
     kicker: "1950 · The imitation game",
     title: "Turing changed the question.",
@@ -166,6 +160,10 @@ const deepDives: Record<
   },
 };
 
+function ScrollHint() {
+  return <span className="diagram-scroll-hint" aria-hidden="true">Scroll the diagram sideways →</span>;
+}
+
 function Flow({ items, loop = false }: { items: string[]; loop?: boolean }) {
   return (
     <div className={`lesson-flow ${loop ? "is-loop" : ""}`}>
@@ -236,54 +234,195 @@ function Timeline({
   );
 }
 
-function AttentionDemo() {
-  const words = ["The", "rover", "avoided", "the", "rock", "because", "it", "was", "large."];
-  const [focus, setFocus] = useState(6);
-  const related: Record<number, number[]> = { 1: [0, 2], 2: [1, 4], 4: [2, 6, 8], 6: [1, 4, 8], 8: [4, 6] };
-  const links = related[focus] ?? [];
-  const position = (index: number) => 70 + (index * 108);
+type GenStep = { token: string; weights: Record<number, number>; dist: [string, number][] };
+
+const PROMPT = ["The", "rover", "avoided", "the", "rock", "because", "it"];
+const GEN: GenStep[] = [
+  { token: "was", weights: { 6: 0.31, 1: 0.24, 4: 0.22, 2: 0.13 }, dist: [["was", 0.58], ["looked", 0.17], ["seemed", 0.11]] },
+  { token: "large", weights: { 4: 0.34, 1: 0.21, 7: 0.19, 2: 0.11 }, dist: [["large", 0.62], ["heavy", 0.19], ["sharp", 0.08]] },
+  { token: ".", weights: { 8: 0.38, 4: 0.21, 1: 0.14 }, dist: [[".", 0.71], [",", 0.12], ["and", 0.07]] },
+];
+
+function DecoderDemo() {
+  const [step, setStep] = useState(0);
+  const [attending, setAttending] = useState(true);
+  const [running, setRunning] = useState(true);
+
+  const shown = PROMPT.concat(GEN.slice(0, step).map((g) => g.token));
+  const current = GEN[step];
+  const finished = step >= GEN.length - 1 && !attending;
+
+  useEffect(() => {
+    if (!running) return;
+    if (finished) { setRunning(false); return; }
+    const timer = window.setTimeout(() => {
+      if (attending) setAttending(false);
+      else { setStep((value) => Math.min(value + 1, GEN.length - 1)); setAttending(true); }
+    }, attending ? 1700 : 1100);
+    return () => window.clearTimeout(timer);
+  }, [running, attending, step, finished]);
+
+  const advance = () => {
+    setRunning(false);
+    if (finished) { setStep(0); setAttending(true); setRunning(true); return; }
+    if (attending) setAttending(false);
+    else { setStep(Math.min(step + 1, GEN.length - 1)); setAttending(true); }
+  };
+
+  const W = 98;
+  const GAP = 9;
+  const X0 = 26;
+  const centre = (index: number) => X0 + index * (W + GAP) + W / 2;
+  const nextIndex = shown.length;
+  const attended = Object.entries(current.weights).map(([index, weight]) => [Number(index), weight] as const);
+
   return (
-    <div className="attention-demo">
-      <p>Select a token. Its <strong>query</strong> highlights the context tokens whose values it will combine.</p>
-      <div className="attention-stage">
-        <svg className="attention-links" viewBox="0 0 1000 250" aria-hidden="true">
-          <defs><linearGradient id="attention-gradient" x1="0" x2="1"><stop stopColor="#5ac7d8" /><stop offset="1" stopColor="#e55d58" /></linearGradient></defs>
-          {links.map((target, index) => <path key={target} className={`attention-link link-${index}`} d={`M ${position(focus)} 205 Q ${(position(focus) + position(target)) / 2} ${35 + (index * 20)} ${position(target)} 205`} />)}
-          <circle className="attention-query-dot" cx={position(focus)} cy="205" r="7" />
-        </svg>
-        <div className="attention-words">
-        {words.map((word, index) => (
-          <button
-            key={`${word}-${index}`}
-            className={focus === index ? "is-focus" : links.includes(index) ? "is-related" : ""}
-            onClick={() => setFocus(index)}
-            style={{ left: `${6 + ((index / (words.length - 1)) * 88)}%` }}
-          >
-            {word}
-          </button>
-        ))}
+    <div className="decoder-demo">
+      <div className="dg-wrap decoder-arch">
+        <Diagram
+          width={520}
+          height={470}
+          minWidth={320}
+          label="A decoder block: tokens and positions enter masked self-attention, then a feed-forward layer, then a linear and softmax head that produces the next-token distribution. The sampled token is appended to the input."
+          nodes={[
+            { id: "in", x: 148, y: 54, tone: "data", kicker: "Input", lines: ["tokens so far"] },
+            { id: "attn", x: 148, y: 184, tone: "model", kicker: "Masked self-attention", lines: ["each position sees", "only earlier tokens"] },
+            { id: "ff", x: 148, y: 312, tone: "control", kicker: "Feed-forward", lines: ["per-position transform"] },
+            { id: "head", x: 148, y: 424, tone: "code", kicker: "Linear + softmax", lines: ["next-token distribution"] },
+          ]}
+          edges={[
+            { from: "in", to: "attn" },
+            { from: "attn", to: "ff" },
+            { from: "ff", to: "head" },
+            { from: "head", to: "in", bend: 215, dashed: true, animate: true, label: "append · repeat" },
+          ]}
+        />
+      </div>
+
+      <div className="decoder-run">
+        <p className="decoder-caption">
+          The model generates <strong>one token at a time</strong>. Each new position attends only to tokens
+          <strong> already written</strong>—never to the future.
+        </p>
+        <div className="decoder-strip">
+          <svg viewBox={`0 0 ${X0 * 2 + (PROMPT.length + GEN.length + 1) * (W + GAP)} 210`} role="img" aria-label={`Generating token ${step + 1}. Attention flows from the next position back to earlier tokens.`}>
+            {attending && attended.map(([index, weight]) => {
+              const x1 = centre(nextIndex);
+              const x2 = centre(index);
+              const lift = 132 - Math.min(78, Math.abs(x1 - x2) * 0.1);
+              return (
+                <path
+                  key={index}
+                  className="decoder-link"
+                  style={{ strokeWidth: 2 + weight * 14, opacity: 0.35 + weight }}
+                  d={`M${x1},${138} C${x1},${lift} ${x2},${lift} ${x2},${138}`}
+                />
+              );
+            })}
+            {shown.map((token, index) => (
+              <g key={`${token}-${index}`} className={`decoder-token ${index >= PROMPT.length ? "is-generated" : ""} ${attending && current.weights[index] ? "is-attended" : ""}`}>
+                <rect x={centre(index) - W / 2} y="144" width={W} height="46" rx="9" />
+                <text x={centre(index)} y="173" textAnchor="middle">{token}</text>
+                {attending && current.weights[index] && (
+                  <text className="decoder-weight" x={centre(index)} y="206" textAnchor="middle">{current.weights[index].toFixed(2)}</text>
+                )}
+              </g>
+            ))}
+            <g className={`decoder-token is-next ${attending ? "is-pending" : "is-emitted"}`}>
+              <rect x={centre(nextIndex) - W / 2} y="144" width={W} height="46" rx="9" />
+              <text x={centre(nextIndex)} y="173" textAnchor="middle">{attending ? "?" : current.token}</text>
+            </g>
+            <text className="decoder-axis" x={centre(0) - W / 2} y="26">WRITTEN SO FAR</text>
+            <text className="decoder-axis is-next" x={centre(nextIndex) - W / 2} y="26">NEXT</text>
+          </svg>
+        </div>
+
+        <div className="decoder-panel">
+          <div className="decoder-dist">
+            <span className="lesson-label">Next-token distribution</span>
+            {current.dist.map(([token, probability], index) => (
+              <div key={token} className={index === 0 && !attending ? "is-chosen" : ""}>
+                <b>{token}</b>
+                <i style={{ width: `${probability * 100}%` }} />
+                <small>{probability.toFixed(2)}</small>
+              </div>
+            ))}
+          </div>
+          <div className="decoder-actions">
+            <p aria-live="polite">
+              {attending
+                ? `Position ${nextIndex + 1} reads the tokens before it.`
+                : `“${current.token}” is appended, and becomes context for the next step.`}
+            </p>
+            <button className="lesson-action" onClick={advance}>
+              {finished ? "Replay generation" : attending ? "Sample the token" : "Generate next token"} <span aria-hidden="true">→</span>
+            </button>
+          </div>
         </div>
       </div>
-      <div className="attention-reading">
-        <span>Query: <b>{words[focus]}</b></span>
-        <i aria-hidden="true">⊕</i>
-        <span>Values from: <b>{links.map((index) => words[index]).join(" · ") || "nearby context"}</b></span>
-        <i aria-hidden="true">→</i>
-        <strong>context-aware representation</strong>
-      </div>
     </div>
+  );
+}
+
+function LoopCycle({ steps, active, onSelect }: { steps: string[]; active: number; onSelect: (index: number) => void }) {
+  const R = 150;
+  const C = 230;
+  const at = (index: number, radius = R) => {
+    const angle = ((-90 + index * (360 / steps.length)) * Math.PI) / 180;
+    return [C + radius * Math.cos(angle), C + radius * Math.sin(angle)] as const;
+  };
+  const arc = (index: number) => {
+    const span = 360 / steps.length;
+    const pad = 20;
+    const a1 = ((-90 + index * span + pad) * Math.PI) / 180;
+    const a2 = ((-90 + (index + 1) * span - pad) * Math.PI) / 180;
+    return `M${C + R * Math.cos(a1)},${C + R * Math.sin(a1)} A${R},${R} 0 0 1 ${C + R * Math.cos(a2)},${C + R * Math.sin(a2)}`;
+  };
+  return (
+    <svg className="loop-cycle" viewBox="0 0 460 460" role="group" aria-label="The agent loop as a cycle of six steps">
+      <defs>
+        <marker id="loop-arrow" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="9" refX="11" refY="4.5" orient="auto">
+          <path d="M0,0 L12,4.5 L0,9 Z" />
+        </marker>
+      </defs>
+      {steps.map((_, index) => (
+        <path key={index} className={`loop-arc ${active === index ? "is-active" : ""}`} d={arc(index)} markerEnd="url(#loop-arrow)" />
+      ))}
+      <circle className="loop-hub" cx={C} cy={C} r="78" />
+      <text className="loop-hub-step" x={C} y={C - 14} textAnchor="middle">STEP {active + 1} OF {steps.length}</text>
+      <text className="loop-hub-name" x={C} y={C + 16} textAnchor="middle">{steps[active]}</text>
+      {steps.map((label, index) => {
+        const [x, y] = at(index);
+        return (
+          <g
+            key={label}
+            className={`loop-node ${active === index ? "is-active" : ""}`}
+            role="button"
+            tabIndex={0}
+            aria-label={`Show step ${index + 1}: ${label}`}
+            aria-current={active === index ? "step" : undefined}
+            onClick={() => onSelect(index)}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(index); } }}
+          >
+            <rect x={x - 62} y={y - 23} width="124" height="46" rx="10" />
+            <text className="loop-node-index" x={x - 44} y={y + 5} textAnchor="middle">{index + 1}</text>
+            <text className="loop-node-label" x={x + 10} y={y + 5} textAnchor="middle">{label}</text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
 function AgentLoop() {
   const steps = ["Goal", "Observe", "Reason", "Use tool", "Read result", "Decide"];
   const descriptions = [
-    "Define the outcome and constraints.",
-    "Collect the current state of the task.",
-    "Choose a useful next action.",
-    "Call a permissioned capability.",
-    "Bring the environment's response back.",
-    "Stop when complete—or begin another cycle.",
+    "Define the outcome and the condition that counts as done.",
+    "Collect the current state of the task before deciding.",
+    "Choose one useful next action from what is now known.",
+    "Call a permissioned capability with validated arguments.",
+    "Bring the environment's response back as new context.",
+    "Stop when the success condition holds—or run another cycle.",
   ];
   const [step, setStep] = useState(0);
   const [autoRun, setAutoRun] = useState(true);
@@ -305,22 +444,10 @@ function AgentLoop() {
     }, 1500);
     return () => window.clearTimeout(timer);
   }, [autoRun, step, steps.length]);
+  const select = (index: number) => { setAutoRun(false); setStep(index); };
   return (
     <div className="agent-loop-demo">
-      <div className="agent-orbit" aria-label={`Agent loop step ${step + 1}: ${steps[step]}`}>
-        <div><span>{String(step + 1).padStart(2, "0")}</span><strong>{steps[step]}</strong></div>
-        {steps.map((label, index) => (
-          <button
-            key={label}
-            className={step === index ? "is-active" : ""}
-            onClick={() => { setAutoRun(false); setStep(index); }}
-            aria-label={`Show ${label} step`}
-            style={{ "--step": index } as React.CSSProperties}
-          >
-            {index + 1}
-          </button>
-        ))}
-      </div>
+      <LoopCycle steps={steps} active={step} onSelect={select} />
       <div className="agent-loop-copy">
         <span className="lesson-label">Step {step + 1} of {steps.length}</span>
         <h3>{steps[step]}</h3>
@@ -384,57 +511,26 @@ function CinematicFigure({
   );
 }
 
-function LectureScene({
-  number,
-  title,
-  intro,
-  points,
-  takeaway,
-  children,
-  wide = false,
-}: {
-  number: string;
-  title: React.ReactNode;
-  intro: string;
-  points: string[];
-  takeaway: string;
-  children: React.ReactNode;
-  wide?: boolean;
-}) {
-  return (
-    <div className={`lecture-scene ${wide ? "is-wide" : ""}`}>
-      <header className="lecture-heading">
-        <span className="lesson-index">{number}</span>
-        <div>
-          <h2>{title}</h2>
-          <p>{intro}</p>
-        </div>
-      </header>
-      <div className="lecture-body">
-        <div className="lecture-visual">{children}</div>
-        <aside className="lecture-notes">
-          <span className="lesson-label">What to understand</span>
-          <ul>
-            {points.map((point) => <li key={point}>{point}</li>)}
-          </ul>
-          <div><span>Key idea</span><strong>{takeaway}</strong></div>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
 function SymbolicSystemDiagram() {
   return (
-    <div className="symbolic-flow" aria-label="Observed facts and expert rules feed an inference engine which produces a traceable recommendation">
-      <svg viewBox="0 0 1000 390" role="img" aria-label="Observed facts and expert rules flow through an inference engine to produce an explainable recommendation.">
-        <defs><marker id="symbolic-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d95650" /></marker></defs>
-        <g className="symbolic-links"><path d="M272 110 C382 110 390 164 468 182" markerEnd="url(#symbolic-arrow)" /><path d="M272 280 C382 280 390 226 468 208" markerEnd="url(#symbolic-arrow)" /><path d="M656 195 L760 195" markerEnd="url(#symbolic-arrow)" /></g>
-        <g className="symbolic-node facts"><rect x="50" y="47" width="222" height="126" rx="14" /><text className="flow-kicker" x="76" y="81">OBSERVED FACTS</text><text className="flow-title" x="76" y="117">temperature = 39°C</text><text className="flow-body" x="76" y="145">culture = positive</text></g>
-        <g className="symbolic-node rules"><rect x="50" y="217" width="222" height="126" rx="14" /><text className="flow-kicker" x="76" y="251">EXPERT RULES</text><text className="flow-title" x="76" y="287">IF evidence A + B</text><text className="flow-body" x="76" y="315">THEN consider C</text></g>
-        <g className="symbolic-engine-node"><path d="M500 88 L625 88 L685 195 L625 302 L500 302 L440 195 Z" /><text className="flow-kicker" x="562" y="159" textAnchor="middle">INFERENCE ENGINE</text><text className="flow-title" x="562" y="193" textAnchor="middle">Match → fire</text><text className="flow-body" x="562" y="221" textAnchor="middle">rules → explain</text></g>
-        <g className="symbolic-node recommendation"><rect x="760" y="122" width="195" height="146" rx="14" /><text className="flow-kicker" x="786" y="158">RECOMMENDATION</text><text className="flow-title" x="786" y="197">Consider C</text><text className="flow-body" x="786" y="228">traceable decision</text></g>
-      </svg>
+    <div className="dg-wrap" aria-label="Observed facts and expert rules feed an inference engine which produces a traceable recommendation">
+      <Diagram
+        width={1080}
+        height={330}
+        label="Observed facts and expert rules flow into an inference engine, which fires matching rules and returns an explainable recommendation."
+        nodes={[
+          { id: "facts", x: 170, y: 108, tone: "data", kicker: "Observed facts", lines: ["temperature = 39°C", "culture = positive"], mono: true },
+          { id: "rules", x: 170, y: 276, tone: "data", kicker: "Expert rules", lines: ["IF evidence A + B", "THEN consider C"], mono: true },
+          { id: "engine", x: 560, y: 192, shape: "hex", tone: "model", kicker: "Inference engine", title: "Match → fire", lines: ["applies rules in order"] },
+          { id: "out", x: 900, y: 192, tone: "code", kicker: "Recommendation", title: "Consider C", lines: ["with the rule path"] },
+        ]}
+        edges={[
+          { from: "facts", to: "engine" },
+          { from: "rules", to: "engine" },
+          { from: "engine", to: "out" },
+        ]}
+      />
+      <ScrollHint />
     </div>
   );
 }
@@ -447,8 +543,8 @@ function NeuralLearningDiagram() {
       <div className="neural-caption"><span>Forward pass</span><strong>weighted connections transform features into a prediction</strong></div>
       <svg className="neural-network-svg" viewBox="0 0 1000 425" role="img" aria-label="Three input neurons connect to four hidden neurons, which connect to one predicted output. Dashed arrows indicate backpropagation in the reverse direction.">
         <defs>
-          <marker id="neural-forward" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#d95650" /></marker>
-          <marker id="neural-back" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 Z" fill="#df918c" /></marker>
+          <marker id="neural-forward" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#b3271f" /></marker>
+          <marker id="neural-back" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 Z" fill="#b4564e" /></marker>
         </defs>
         <g className="network-layer-labels"><text x="180" y="34" textAnchor="middle">INPUT LAYER</text><text x="510" y="34" textAnchor="middle">HIDDEN LAYER</text><text x="820" y="34" textAnchor="middle">OUTPUT</text></g>
         <g className="network-connections" aria-hidden="true">
@@ -473,88 +569,138 @@ function NeuralLearningDiagram() {
 
 function AgentArchitectureDiagram() {
   return (
-    <div className="agent-flow" aria-label="An agent observes an environment, updates state, plans toward a goal, acts, and receives a new observation">
-      <svg viewBox="0 0 1100 445" role="img" aria-label="Connected agent loop from environment through observation, state, goal and planning to action, returning to the environment.">
-        <defs><marker id="agent-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#5ac7d8" /></marker></defs>
-        <g className="agent-flow-links"><path d="M268 222 L344 222" markerEnd="url(#agent-arrow)" /><path d="M512 222 L588 222" markerEnd="url(#agent-arrow)" /><path d="M756 222 L830 222" markerEnd="url(#agent-arrow)" /><path className="agent-return" d="M910 310 C800 416 297 416 178 310" markerEnd="url(#agent-arrow)" /></g>
-        <g className="agent-environment-node"><path d="M66 132 C75 81 155 72 190 118 C242 109 274 151 258 195 C291 239 253 291 205 283 C166 329 88 308 90 264 C43 249 34 177 66 132 Z" /><text className="flow-kicker" x="162" y="187" textAnchor="middle">ENVIRONMENT</text><text className="flow-title" x="162" y="219" textAnchor="middle">World / software</text><text className="flow-body" x="162" y="246" textAnchor="middle">people · data · tools</text></g>
-        <g className="agent-core-node"><circle cx="430" cy="222" r="92" /><text className="flow-kicker" x="430" y="192" textAnchor="middle">AGENT STATE</text><text className="flow-title" x="430" y="226" textAnchor="middle">Observe</text><text className="flow-body" x="430" y="253" textAnchor="middle">what is true now?</text></g>
-        <g className="agent-goal-node"><path d="M625 135 H715 L752 222 L715 309 H625 L588 222 Z" /><text className="flow-kicker" x="670" y="191" textAnchor="middle">OBJECTIVE</text><text className="flow-title" x="670" y="226" textAnchor="middle">Goal</text><text className="flow-body" x="670" y="253" textAnchor="middle">what outcome?</text></g>
-        <g className="agent-plan-node"><rect x="830" y="132" width="200" height="180" rx="18" /><path d="M870 192 H990 M870 222 H956 M870 252 H918" /><text className="flow-kicker" x="930" y="166" textAnchor="middle">POLICY / PLAN</text><text className="flow-title" x="930" y="289" textAnchor="middle">Choose action</text></g>
-        <text className="agent-observation-label" x="306" y="196" textAnchor="middle">observation</text><text className="agent-action-label" x="791" y="196" textAnchor="middle">action</text><text className="agent-loop-label" x="544" y="408" textAnchor="middle">THE ACTION CHANGES THE ENVIRONMENT → NEW OBSERVATION</text>
-      </svg>
+    <div className="dg-wrap" aria-label="An agent observes an environment, updates state, compares against a goal, chooses an action, and changes the environment again">
+      <Diagram
+        width={1160}
+        height={380}
+        label="The environment is observed by the agent, which holds state, compares it against a goal, chooses an action through its policy, and changes the environment again."
+        nodes={[
+          { id: "env", x: 152, y: 168, shape: "cloud", tone: "data", kicker: "Environment", title: "World / software", lines: ["people · data · tools"] },
+          { id: "state", x: 500, y: 168, shape: "circle", tone: "model", kicker: "Agent state", title: "Observe", lines: ["what is true now?"] },
+          { id: "goal", x: 800, y: 168, shape: "hex", tone: "code", kicker: "Objective", title: "Goal", lines: ["what outcome?"] },
+          { id: "policy", x: 1040, y: 168, tone: "control", kicker: "Policy / plan", title: "Choose action", lines: ["which step next?"] },
+        ]}
+        edges={[
+          { from: "env", to: "state", label: "observation", tone: "data" },
+          { from: "state", to: "goal", tone: "data" },
+          { from: "goal", to: "policy", label: "action", tone: "data" },
+          { from: "policy", to: "env", bend: -185, dashed: true, animate: true, label: "the action changes the environment → new observation" },
+        ]}
+      />
+      <ScrollHint />
     </div>
   );
 }
 
 function ToolBoundaryDiagram() {
   return (
-    <div className="tool-flow" aria-label="A language model proposes a structured tool call which software validates before an API executes it and returns an observation">
-      <svg viewBox="0 0 1120 425" role="img" aria-label="Foundation model proposes a structured tool call. A policy gate validates it before an API executes it and returns an observation back to the model.">
-        <defs>
-          <marker id="tool-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d95650" /></marker>
-          <marker id="tool-return" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M9,0 L0,4.5 L9,9 Z" fill="#dfa09b" /></marker>
-        </defs>
-        <g className="tool-flow-links"><path d="M260 189 L350 189" markerEnd="url(#tool-arrow)" /><path d="M576 189 L658 189" markerEnd="url(#tool-arrow)" /><path d="M865 189 L942 189" markerEnd="url(#tool-arrow)" /><path className="tool-return" d="M1005 313 C825 391 315 391 143 313" markerEnd="url(#tool-return)" /></g>
-        <g className="tool-flow-model"><circle cx="145" cy="189" r="109" /><circle cx="145" cy="156" r="19" /><path d="M109 220 C118 181 172 181 181 220" /><text className="flow-kicker" x="145" y="257" textAnchor="middle">PROBABILISTIC</text><text className="flow-title" x="145" y="285" textAnchor="middle">Foundation model</text></g>
-        <g className="tool-flow-contract"><path d="M368 71 H554 L576 93 V307 H368 Z" /><path d="M554 71 V96 H576" /><text className="flow-kicker" x="398" y="122">STRUCTURED CONTRACT</text><text className="flow-title" x="398" y="162">tool call</text><text className="flow-code" x="398" y="202">send_email(</text><text className="flow-code" x="414" y="229">to: "…"</text><text className="flow-code" x="398" y="256">)</text></g>
-        <g className="tool-flow-policy"><path d="M762 65 L850 100 V190 C850 252 812 292 762 318 C712 292 674 252 674 190 V100 Z" /><text className="flow-kicker" x="762" y="145" textAnchor="middle">DETERMINISTIC GATE</text><text className="flow-title" x="762" y="184" textAnchor="middle">Validate + authorise</text><text className="flow-body" x="762" y="215" textAnchor="middle">schema · policy · approval</text><text className="flow-body" x="762" y="239" textAnchor="middle">identity · audit</text></g>
-        <g className="tool-flow-api"><rect x="950" y="107" width="135" height="165" rx="40" /><path d="M991 166 H1044 M991 190 H1044 M991 214 H1025" /><text className="flow-kicker" x="1018" y="242" textAnchor="middle">ENVIRONMENT</text><text className="flow-title" x="1018" y="267" textAnchor="middle">API</text></g>
-        <text className="tool-return-label" x="575" y="385" textAnchor="middle">OBSERVATION RETURNS TO THE AGENT’S NEXT DECISION</text>
-      </svg>
+    <div className="dg-wrap" aria-label="A language model proposes a structured tool call which software validates and authorises before an API executes it">
+      <Diagram
+        width={1180}
+        height={360}
+        label="A foundation model proposes a structured tool call. Deterministic software validates and authorises it, an API executes it, and the observation returns to the model."
+        nodes={[
+          { id: "model", x: 165, y: 158, shape: "circle", tone: "model", kicker: "Probabilistic", title: "Foundation model" },
+          { id: "call", x: 500, y: 158, shape: "doc", tone: "model", kicker: "Structured contract", lines: ["send_email(", "  to: \"…\"", ")"], mono: true },
+          { id: "gate", x: 820, y: 158, shape: "shield", tone: "code", kicker: "Deterministic gate", title: "Validate + authorise", lines: ["schema · policy · approval"] },
+          { id: "api", x: 1085, y: 158, shape: "stadium", tone: "data", kicker: "Environment", title: "API" },
+        ]}
+        edges={[
+          { from: "model", to: "call", label: "proposes" },
+          { from: "call", to: "gate" },
+          { from: "gate", to: "api" },
+          { from: "api", to: "model", bend: -150, dashed: true, animate: true, label: "observation returns to the agent’s next decision" },
+        ]}
+      />
+      <ScrollHint />
     </div>
   );
 }
 
 function HarnessArchitecture() {
   return (
-    <div className="harness-flow" aria-label="A foundation model is orchestrated through context and tools, constrained by controls, and monitored by operational evidence">
-      <svg viewBox="0 0 1100 470" role="img" aria-label="Agent harness architecture. A foundation model connects to orchestration, context and tools, control gates, and an operational evidence layer.">
-        <defs><marker id="harness-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#d95650" /></marker></defs>
-        <g className="harness-links"><path d="M540 180 L540 116" markerEnd="url(#harness-arrow)" /><path d="M376 235 L258 235" markerEnd="url(#harness-arrow)" /><path d="M704 235 L842 235" markerEnd="url(#harness-arrow)" /><path d="M540 324 L540 380" markerEnd="url(#harness-arrow)" /></g>
-        <g className="harness-node orchestration"><rect x="332" y="35" width="416" height="84" rx="16" /><text className="flow-kicker" x="364" y="69">ORCHESTRATION</text><text className="flow-body" x="364" y="99">goal → planner → loop → router → stop rules</text></g>
-        <g className="harness-node context"><rect x="45" y="161" width="215" height="148" rx="16" /><text className="flow-kicker" x="73" y="199">CONTEXT + CAPABILITIES</text><text className="flow-body" x="73" y="232">retrieval · memory</text><text className="flow-body" x="73" y="261">tools · durable state</text></g>
-        <g className="harness-model-node"><circle cx="540" cy="252" r="94" /><text className="flow-kicker" x="540" y="215" textAnchor="middle">REASONING ENGINE</text><text className="flow-title" x="540" y="246" textAnchor="middle">Foundation</text><text className="flow-title" x="540" y="273" textAnchor="middle">model</text><text className="flow-body" x="540" y="299" textAnchor="middle">language · perception</text><text className="flow-body" x="540" y="319" textAnchor="middle">decision support</text></g>
-        <g className="harness-node controls"><path d="M866 145 L1035 145 L1065 180 V291 L1035 326 H866 L836 291 V180 Z" /><text className="flow-kicker" x="950" y="195" textAnchor="middle">CONTROL PLANE</text><text className="flow-body" x="950" y="228" textAnchor="middle">identity · policy</text><text className="flow-body" x="950" y="256" textAnchor="middle">approval · sandbox</text></g>
-        <g className="harness-node operations"><rect x="205" y="370" width="670" height="82" rx="14" /><text className="flow-kicker" x="235" y="405">OPERATIONAL EVIDENCE</text><text className="flow-body" x="510" y="399">logs · traces · evaluation</text><text className="flow-body" x="510" y="427">cost · latency · audit</text></g>
-      </svg>
+    <div className="dg-wrap" aria-label="A foundation model sits inside a harness of orchestration, context, controls and operational evidence">
+      <Diagram
+        width={1140}
+        height={520}
+        label="Orchestration drives a foundation model, which draws on context and capabilities, is constrained by a control plane, and emits operational evidence."
+        nodes={[
+          { id: "orch", x: 570, y: 70, tone: "control", kicker: "Orchestration", lines: ["goal → planner → loop → router → stop rules"] },
+          { id: "model", x: 570, y: 262, shape: "circle", tone: "model", kicker: "Reasoning engine", title: "Foundation model", lines: ["language · decisions"] },
+          { id: "ctx", x: 172, y: 262, tone: "data", kicker: "Context + capabilities", lines: ["retrieval · memory", "tools · durable state"] },
+          { id: "ctrl", x: 968, y: 262, shape: "hex", tone: "code", kicker: "Control plane", lines: ["identity · policy", "approval · sandbox"] },
+          { id: "ops", x: 570, y: 452, kicker: "Operational evidence", lines: ["logs · traces · evaluation · cost · latency · audit"] },
+        ]}
+        edges={[
+          { from: "orch", to: "model", label: "bounded task" },
+          { from: "model", to: "ctx", label: "reads" },
+          { from: "model", to: "ctrl", label: "checked by" },
+          { from: "model", to: "ops", label: "records" },
+        ]}
+      />
+      <ScrollHint />
     </div>
   );
 }
 
 function AgenticBoundaryDiagram() {
-  return <div className="agentic-boundary-flow" aria-label="An AI agent sits inside a wider agentic AI system">
-    <svg viewBox="0 0 1050 305" role="img" aria-label="A goal-directed AI agent is embedded in a wider agentic system of software, controls, data, and people.">
-      <defs><marker id="boundary-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d95650" /></marker></defs>
-      <rect className="boundary-system" x="35" y="30" width="980" height="240" rx="22" /><text className="flow-kicker" x="72" y="68">AGENTIC AI SYSTEM</text>
-      <path className="boundary-link" d="M390 153 L532 153" markerEnd="url(#boundary-arrow)" />
-      <g className="boundary-agent"><circle cx="280" cy="153" r="86" /><text className="flow-kicker" x="280" y="130" textAnchor="middle">AI AGENT</text><text className="flow-title" x="280" y="160" textAnchor="middle">Observe · reason</text><text className="flow-body" x="280" y="187" textAnchor="middle">act · stop</text></g>
-      <g className="boundary-system-parts"><rect x="558" y="92" width="124" height="124" rx="12" /><rect x="704" y="92" width="124" height="124" rx="12" /><rect x="850" y="92" width="124" height="124" rx="12" /><text className="flow-kicker" x="620" y="130" textAnchor="middle">SOFTWARE</text><text className="flow-body" x="620" y="164" textAnchor="middle">APIs · data</text><text className="flow-kicker" x="766" y="130" textAnchor="middle">CONTROLS</text><text className="flow-body" x="766" y="164" textAnchor="middle">policy · audit</text><text className="flow-kicker" x="912" y="130" textAnchor="middle">PEOPLE</text><text className="flow-body" x="912" y="164" textAnchor="middle">approval · review</text></g>
-    </svg>
-  </div>;
+  return (
+    <div className="dg-wrap" aria-label="An AI agent sits inside a wider agentic AI system of software, controls and people">
+      <Diagram
+        width={1120}
+        height={400}
+        label="A goal-directed AI agent is one component inside a wider agentic system that also contains software, controls and people."
+        nodes={[
+          { id: "agent", x: 258, y: 228, shape: "circle", tone: "model", kicker: "AI agent", title: "Observe · reason", lines: ["act · stop"] },
+          { id: "software", x: 620, y: 150, tone: "data", kicker: "Software", lines: ["APIs · data"] },
+          { id: "controls", x: 620, y: 290, tone: "code", kicker: "Controls", lines: ["policy · audit"] },
+          { id: "people", x: 910, y: 215, tone: "control", kicker: "People", lines: ["approval · review"] },
+        ]}
+        edges={[
+          { from: "agent", to: "software" },
+          { from: "agent", to: "controls" },
+          { from: "software", to: "people", tone: "data" },
+          { from: "controls", to: "people", tone: "data" },
+        ]}
+      >
+        <g className="dg-frame">
+          <rect x="40" y="48" width="1040" height="326" rx="24" />
+          <text x="72" y="80">AGENTIC AI SYSTEM</text>
+        </g>
+      </Diagram>
+      <ScrollHint />
+    </div>
+  );
 }
 
 function ConvergenceDiagram() {
-  return <div className="convergence-flow" aria-label="Three histories converge to form Agentic AI">
-    <svg viewBox="0 0 1080 420" role="img" aria-label="Architecture of action, learned capability, and operational environment converge into agentic AI.">
-      <defs><marker id="convergence-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#d95650" /></marker></defs>
-      <g className="convergence-links"><path d="M255 180 C330 180 350 284 450 305" markerEnd="url(#convergence-arrow)" /><path d="M540 180 L540 283" markerEnd="url(#convergence-arrow)" /><path d="M825 180 C750 180 730 284 630 305" markerEnd="url(#convergence-arrow)" /></g>
-      <g className="convergence-source action"><rect x="40" y="42" width="215" height="138" rx="16" /><text className="flow-kicker" x="68" y="80">01 · ARCHITECTURE</text><text className="flow-title" x="68" y="116">Goals + plans</text><text className="flow-body" x="68" y="148">state · search · action</text></g>
-      <g className="convergence-source learning"><rect x="432" y="42" width="215" height="138" rx="16" /><text className="flow-kicker" x="460" y="80">02 · LEARNING</text><text className="flow-title" x="460" y="116">Foundation models</text><text className="flow-body" x="460" y="148">language · perception</text></g>
-      <g className="convergence-source software"><rect x="825" y="42" width="215" height="138" rx="16" /><text className="flow-kicker" x="853" y="80">03 · SOFTWARE</text><text className="flow-title" x="853" y="116">Programmable world</text><text className="flow-body" x="853" y="148">APIs · data · identity</text></g>
-      <g className="convergence-result"><path d="M415 296 H665 L720 352 L665 408 H415 L360 352 Z" /><text x="540" y="347" textAnchor="middle">AGENTIC AI</text><text x="540" y="376" textAnchor="middle">reason + act + observe + control</text></g>
-    </svg>
-  </div>;
+  return (
+    <div className="dg-wrap" aria-label="Three histories converge to form Agentic AI">
+      <Diagram
+        width={1120}
+        height={430}
+        label="Intelligent-systems architecture, machine learning and programmable software converge into agentic AI."
+        nodes={[
+          { id: "arch", x: 190, y: 110, tone: "data", kicker: "01 · Architecture", title: "Goals + plans", lines: ["state · search · action"] },
+          { id: "learn", x: 560, y: 110, tone: "control", kicker: "02 · Learning", title: "Foundation models", lines: ["language · perception"] },
+          { id: "soft", x: 930, y: 110, tone: "code", kicker: "03 · Software", title: "Programmable world", lines: ["APIs · data · identity"] },
+          { id: "agentic", x: 560, y: 340, shape: "hex", tone: "accent", title: "AGENTIC AI", lines: ["reason + act + observe + control"] },
+        ]}
+        edges={[
+          { from: "arch", to: "agentic" },
+          { from: "learn", to: "agentic" },
+          { from: "soft", to: "agentic" },
+        ]}
+      />
+      <ScrollHint />
+    </div>
+  );
 }
 
 export default function LessonDeck() {
-  const [current, setCurrent] = useState(0);
-  const [detail, setDetail] = useState<string | null>(null);
-  const [isPresenting, setIsPresenting] = useState(false);
-  const deckRef = useRef<HTMLElement>(null);
   const lessonAsset = useBaseUrl("img/lessons/");
 
-  const slides = useMemo<Slide[]>(() => [
+  const buildSlides = useCallback((setDetail: (id: string) => void): Slide[] => [
     {
       phase: "turing",
       eyebrow: "Lesson 01 · The starting question",
@@ -627,6 +773,7 @@ export default function LessonDeck() {
             "Expert systems separate a knowledge base from the engine that applies it.",
           ]}
           takeaway="Goals, state, rules and action sequences are old foundations of agentic systems."
+          wide
         >
           <SymbolicSystemDiagram />
           <div className="case-strip"><span><b>1956</b>Dartmouth names the field</span><span><b>1966–72</b>Shakey plans and moves</span><span><b>1970s</b>MYCIN explains rule paths</span></div>
@@ -651,7 +798,7 @@ export default function LessonDeck() {
         >
           <div className="search-space-svg" aria-label="Annotated search tree from initial state to goal">
             <svg viewBox="0 0 900 390" role="img" aria-label="Search begins at an initial state, branches through possible actions, and follows a selected path to a goal">
-              <defs><marker id="search-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#d95650" /></marker></defs>
+              <defs><marker id="search-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#b3271f" /></marker></defs>
               <g className="search-links"><path d="M160 182 L289 102" /><path d="M163 195 L287 195" /><path d="M160 208 L289 293" /><path d="M313 92 L492 67" /><path d="M312 99 L493 137" /><path d="M313 193 L492 172" className="pruned" /><path d="M312 198 L493 242" /><path d="M312 302 L493 323" className="pruned" /><path d="M518 66 L704 74" className="selected" markerEnd="url(#search-arrow)" /><path d="M518 137 L706 82" className="pruned" /><path d="M518 242 L709 91" className="pruned" /></g>
               <g className="search-nodes"><circle cx="140" cy="195" r="23" className="start" /><circle cx="300" cy="95" r="13" /><circle cx="300" cy="195" r="13" /><circle cx="300" cy="300" r="13" /><circle cx="505" cy="65" r="13" /><circle cx="505" cy="140" r="13" /><circle cx="505" cy="170" r="13" /><circle cx="505" cy="245" r="13" /><circle cx="505" cy="325" r="13" /><circle cx="730" cy="75" r="25" className="goal" /></g>
               <g className="search-labels"><text x="140" y="202" textAnchor="middle">S</text><text x="140" y="245" textAnchor="middle">initial state</text><text x="505" y="372" textAnchor="middle">candidate states</text><text x="730" y="82" textAnchor="middle">G</text><text x="730" y="125" textAnchor="middle">goal</text><text x="470" y="30">heuristic ranks promising branches</text></g>
@@ -722,6 +869,7 @@ export default function LessonDeck() {
             "Goal- and utility-based agents compare possible future states before choosing.",
           ]}
           takeaway="Agency is a systems property: model + state + objective + action + feedback."
+          wide
         >
           <AgentArchitectureDiagram />
           <div className="agent-taxonomy"><span>Reactive<small>respond now</small></span><span>Model-based<small>remember state</small></span><span>Goal-based<small>plan ahead</small></span><span>Learning<small>improve from experience</small></span></div>
@@ -759,17 +907,18 @@ export default function LessonDeck() {
       content: (
         <LectureScene
           number="09"
-          title={<>Attention builds a representation from <em>relevant context</em>.</>}
-          intro="Each token creates a query, key, and value. Query–key similarity becomes a set of weights; the weighted values produce a context-sensitive representation."
+          title={<>A decoder writes <em>one token at a time</em>.</>}
+          intro="Each token forms a query, a key and a value. In a decoder, masked self-attention lets a position read only the tokens already written; the model then scores the vocabulary, samples one token, appends it, and repeats."
           points={[
-            "A query asks what information the current token needs.",
-            "Keys advertise what each token can contribute; values carry that information forward.",
-            "Multiple heads can represent different relationships in parallel.",
+            "A query asks what the current position needs; keys advertise what each earlier token offers.",
+            "The causal mask hides future positions—this is what makes generation autoregressive.",
+            "Every sampled token becomes part of the context for the next step.",
           ]}
-          takeaway="The same word can acquire a different representation depending on the words around it."
+          takeaway="Generation is a loop: attend over what exists, predict the next token, append it, repeat."
+          wide
         >
-          <AttentionDemo />
-          <div className="attention-formula"><code>softmax(QKᵀ / √dₖ)V</code><span>compare → normalise → combine</span></div>
+          <DecoderDemo />
+          <div className="attention-formula"><code>softmax(QKᵀ / √dₖ + mask)V</code><span>compare → mask the future → normalise → combine</span></div>
           <button className="lesson-action" onClick={() => setDetail("transformer")}>Open the Transformer explainer <span>↗</span></button>
         </LectureScene>
       ),
@@ -788,6 +937,7 @@ export default function LessonDeck() {
             "Instruction tuning and human feedback made general models easier to direct conversationally.",
           ]}
           takeaway="Natural language becomes a programmable interface to a broad learned capability."
+          wide
         >
           <Timeline autoPlay items={[
             ["2018", "Pretraining", "GPT-1 and BERT reuse learned language representations across tasks."],
@@ -795,7 +945,31 @@ export default function LessonDeck() {
             ["2020", "In-context learning", "GPT-3 performs new tasks from instructions and examples in the prompt."],
             ["2022", "Instruction following", "Chat interfaces make model capability accessible to a much larger audience."],
           ]} />
-          <div className="foundation-transfer"><span>Broad pretraining</span><i>→</i><b>one reusable model</b><i>→</i><span>many prompted tasks</span></div>
+          <div className="dg-wrap">
+            <Diagram
+              width={1140}
+              height={330}
+              label="Large text corpora are used for pretraining, which produces one reusable foundation model that many different tasks are then prompted from."
+              nodes={[
+                { id: "corpus", x: 130, y: 165, tone: "data", kicker: "Text corpora", lines: ["books · web · code"] },
+                { id: "pre", x: 410, y: 165, tone: "control", kicker: "Pretraining", lines: ["predict the next token", "at scale"] },
+                { id: "model", x: 690, y: 165, shape: "circle", tone: "model", kicker: "One model", title: "Foundation" },
+                { id: "t1", x: 1000, y: 48, title: "Summarise" },
+                { id: "t2", x: 1000, y: 126, title: "Classify" },
+                { id: "t3", x: 1000, y: 204, title: "Translate" },
+                { id: "t4", x: 1000, y: 282, title: "Write code" },
+              ]}
+              edges={[
+                { from: "corpus", to: "pre" },
+                { from: "pre", to: "model" },
+                { from: "model", to: "t1" },
+                { from: "model", to: "t2" },
+                { from: "model", to: "t3" },
+                { from: "model", to: "t4" },
+              ]}
+            />
+            <ScrollHint />
+          </div>
         </LectureScene>
       ),
     },
@@ -813,6 +987,7 @@ export default function LessonDeck() {
             "SaaS and digitised workflows create a rich environment of real actions and observations.",
           ]}
           takeaway="An API is an actuator: it lets a reasoning system change a digital environment."
+          wide
         >
           <Timeline onOpen={() => setDetail("cloud")} items={[
             ["1989–90s", "Web", "Networked information becomes globally addressable."],
@@ -820,7 +995,28 @@ export default function LessonDeck() {
             ["2006", "Elastic cloud", "Compute and storage become on-demand services."],
             ["2010s→", "Platforms", "Identity, data, events and observability become composable infrastructure."],
           ]} />
-          <div className="api-examples"><code>search_flights()</code><code>query_customer()</code><code>send_email()</code><code>request_approval()</code></div>
+          <div className="dg-wrap">
+            <Diagram
+              width={1210}
+              height={430}
+              label="The web made information addressable, APIs made capabilities callable, cloud made infrastructure programmable and SaaS digitised workflows, so a reasoning system now has real actions available."
+              nodes={[
+                { id: "web", x: 300, y: 56, w: 500, tone: "data", kicker: "Web · 1989–90s", lines: ["information becomes addressable"] },
+                { id: "api", x: 300, y: 172, w: 500, tone: "data", kicker: "Web APIs · 1990s–2000s", lines: ["capabilities become callable"] },
+                { id: "cloud", x: 300, y: 288, w: 500, tone: "control", kicker: "Cloud · 2006→", lines: ["compute, storage and identity on demand"] },
+                { id: "saas", x: 300, y: 386, w: 500, tone: "code", kicker: "Platforms · 2010s→", lines: ["workflows, events and telemetry"] },
+                { id: "act", x: 920, y: 220, shape: "hex", tone: "model", kicker: "For an agent", title: "An API is an actuator", lines: ["search_flights() · send_email()", "query_customer() · request_approval()"], mono: false },
+              ]}
+              edges={[
+                { from: "web", to: "api" },
+                { from: "api", to: "cloud" },
+                { from: "cloud", to: "saas" },
+                { from: "api", to: "act", tone: "data" },
+                { from: "saas", to: "act", tone: "data" },
+              ]}
+            />
+            <ScrollHint />
+          </div>
         </LectureScene>
       ),
     },
@@ -838,6 +1034,7 @@ export default function LessonDeck() {
             "The model does not literally send the payment or email; credentialed software executes it.",
           ]}
           takeaway="Separate probabilistic reasoning from deterministic execution and authorization."
+          wide
         >
           <ToolBoundaryDiagram />
           <div className="control-legend"><span>model proposes</span><span>software validates</span><span>policy authorises</span><span>service executes</span></div>
@@ -878,6 +1075,7 @@ export default function LessonDeck() {
             "Tracing and evaluation reveal what happened, why, how long it took, and whether it worked.",
           ]}
           takeaway="Most production reliability and safety lives outside the foundation model."
+          wide
         >
           <HarnessArchitecture />
           <button className="lesson-action" onClick={() => setDetail("harness")}>Inspect every harness layer <span>↗</span></button>
@@ -898,6 +1096,7 @@ export default function LessonDeck() {
             "Enterprise workflows are usually hybrid systems: agents plus ordinary software and people.",
           ]}
           takeaway="Judge the whole system boundary, not just the component labelled ‘agent’."
+          wide
         >
           <AgenticBoundaryDiagram />
           <KnowledgeCheck />
@@ -927,108 +1126,15 @@ export default function LessonDeck() {
     },
   ], [lessonAsset]);
 
-  const active = slides[current];
-  const firstByPhase = useMemo(() => {
-    const map = {} as Record<Phase, number>;
-    slides.forEach((slide, index) => { if (map[slide.phase] === undefined) map[slide.phase] = index; });
-    return map;
-  }, [slides]);
-
-  const show = (index: number) => setCurrent(Math.max(0, Math.min(slides.length - 1, index)));
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (detail) { if (event.key === "Escape") setDetail(null); return; }
-      if (event.key === "Escape" && isPresenting) {
-        if (document.fullscreenElement) void document.exitFullscreen?.();
-        setIsPresenting(false);
-        return;
-      }
-      if (["ArrowRight", "PageDown"].includes(event.key) || (event.key === " " && event.target === document.body)) {
-        event.preventDefault(); show(current + 1);
-      }
-      if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); show(current - 1); }
-      if (event.key === "Home") show(0);
-      if (event.key === "End") show(slides.length - 1);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [current, detail, isPresenting, slides.length]);
-
-  useEffect(() => {
-    const syncPresentationMode = () => setIsPresenting(document.fullscreenElement === deckRef.current);
-    document.addEventListener("fullscreenchange", syncPresentationMode);
-    return () => document.removeEventListener("fullscreenchange", syncPresentationMode);
-  }, []);
-
-  useEffect(() => {
-    deckRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [current]);
-
-  useEffect(() => {
-    if (!detail) return;
-    const previous = document.activeElement as HTMLElement | null;
-    document.querySelector<HTMLButtonElement>(".lesson-modal-close")?.focus();
-    return () => previous?.focus();
-  }, [detail]);
-
-  const modal = detail ? deepDives[detail] : null;
-  const togglePresentation = async () => {
-    if (isPresenting) {
-      if (document.fullscreenElement) {
-        try { await document.exitFullscreen?.(); } catch { /* state still exits below */ }
-      }
-      setIsPresenting(false);
-      return;
-    }
-    setIsPresenting(true);
-    try {
-      await deckRef.current?.requestFullscreen?.();
-    } catch {
-      // The expanded player still works when native fullscreen is unavailable.
-    }
-  };
-
   return (
-    <section className={`lesson-shell ${isPresenting ? "is-presenting" : ""}`} ref={deckRef} aria-label="Interactive lesson: From Turing to Agentic AI">
-      <aside className="lesson-rail">
-        <Link to="/ai-fundamentals" className="lesson-rail-back">← Course index</Link>
-        <div className="lesson-rail-title"><span>AI Fundamentals</span><strong>From Turing<br />to Agentic AI</strong></div>
-        <nav aria-label="Lesson chapters">
-          {(Object.keys(phaseLabels) as Phase[]).map((phase) => (
-            <button key={phase} aria-label={phaseLabels[phase]} aria-current={active.phase === phase ? "step" : undefined} onClick={() => show(firstByPhase[phase])}><span>{String(firstByPhase[phase] + 1).padStart(2, "0")}</span>{phaseLabels[phase]}</button>
-          ))}
-        </nav>
-        <div className="lesson-rail-footer"><span>Scene</span><strong>{String(current + 1).padStart(2, "0")} / {String(slides.length).padStart(2, "0")}</strong><small>← → to navigate</small></div>
-      </aside>
-
-      <div className="lesson-player">
-        <div className="lesson-stage" key={current}>
-          <div className="lesson-stage-meta"><span>{active.eyebrow}</span><span>{String(current + 1).padStart(2, "0")} / {slides.length}</span></div>
-          <div className="lesson-stage-content">{active.content}</div>
-        </div>
-
-        <div className="lesson-controls">
-          <button onClick={() => show(current - 1)} disabled={current === 0} aria-label="Previous slide">←</button>
-          <div className="lesson-progress" aria-label={`${current + 1} of ${slides.length} slides`}><i style={{ width: `${((current + 1) / slides.length) * 100}%` }} /></div>
-          <button onClick={() => show(current + 1)} disabled={current === slides.length - 1} aria-label="Next slide">→</button>
-          <button className="lesson-fullscreen" onClick={togglePresentation} aria-label={isPresenting ? "Exit presentation" : "Enter presentation"} aria-pressed={isPresenting}>
-            {isPresenting ? "×" : "↗"} <span>{isPresenting ? "Exit presentation" : "Present"}</span>
-          </button>
-        </div>
-      </div>
-
-      {modal && (
-        <div className="lesson-modal" role="dialog" aria-modal="true" aria-labelledby="lesson-modal-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetail(null); }}>
-          <div className="lesson-modal-panel">
-            <button className="lesson-modal-close" onClick={() => setDetail(null)} aria-label="Close deep dive">×</button>
-            <span className="lesson-label">{modal.kicker}</span>
-            <h2 id="lesson-modal-title">{modal.title}</h2>
-            <div className="lesson-modal-content">{modal.content}</div>
-            {modal.source && <a className="lesson-source" href={modal.source[1]} target="_blank" rel="noreferrer">{modal.source[0]} <span>↗</span></a>}
-          </div>
-        </div>
-      )}
-    </section>
+    <LessonPlayer
+      ariaLabel="Interactive lesson: From Turing to Agentic AI"
+      course="AI Fundamentals"
+      railTitle={<>From Turing<br />to Agentic AI</>}
+      phaseLabels={phaseLabels}
+      buildSlides={buildSlides}
+      deepDives={deepDives}
+      nextLesson={{ label: "Lesson 02", to: "/ai-fundamentals/architectures-and-design-principles" }}
+    />
   );
 }
